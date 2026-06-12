@@ -31,13 +31,14 @@ PyTorch automatically selects CUDA in the DQN trainer and otherwise falls back t
 
 ```powershell
 war-game                       # pygame visualizer
-war-game --headless --steps 20 # headless smoke run
-python -m war_game.rl.dqn --episodes 500 --output runs/ew_dqn
+war-game --headless --steps 20 # deterministic headless smoke run
+war-game --stochastic --seed 42 # sample combat/EW outcomes reproducibly
+python -m war_game.rl.dqn --episodes 500 --output runs/ew_dqn --stochastic
 tensorboard --logdir runs
 pytest
 ```
 
-The visualizer advances bots in real time. The headless engine is deterministic when seeded and can run much faster than real time for training/search.
+The visualizer advances bots in real time. The engine uses deterministic expected outcomes by default and can run much faster than real time for training/search. Pass `--stochastic` at startup to sample attack-damage variance and EW success; `--seed` makes those samples reproducible. Programmatic callers can make the same choice with `GameEngine(..., stochastic=True)` or `EWSearchEnv(..., stochastic=True)`.
 
 ## Ollama strategic planning
 
@@ -77,7 +78,7 @@ For broader tactical search, clone the engine at a decision boundary, roll out c
 ```text
 src/war_game/model.py       domain types, factions, terrain, actions
 src/war_game/map.py         axial hex geometry and A* pathfinding
-src/war_game/engine.py      real-time deterministic simulation and fog of war
+src/war_game/engine.py      deterministic/stochastic simulation and fog of war
 src/war_game/controllers.py pluggable controller protocol and baseline bot
 src/war_game/visual.py      optional pygame rendering
 src/war_game/llm.py         Ollama observations, prompts, and action validation

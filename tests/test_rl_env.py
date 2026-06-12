@@ -12,3 +12,10 @@ def test_environment_contract():
     assert isinstance(reward, float) and not terminated and not truncated and "distance" in info
     _, _, _, truncated, _ = env.step(8)
     assert truncated
+
+
+def test_environment_passes_stochastic_mode_to_engine():
+    env = EWSearchEnv(seed=3, stochastic=True)
+    assert env.engine.stochastic
+    env.reset(4)
+    assert env.engine.stochastic

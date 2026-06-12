@@ -22,8 +22,16 @@ class EWSearchEnv:
     observation_size = 10
     action_size = 9
 
-    def __init__(self, width: int = 9, height: int = 9, max_steps: int = 100, seed: int = 0):
+    def __init__(
+        self,
+        width: int = 9,
+        height: int = 9,
+        max_steps: int = 100,
+        seed: int = 0,
+        stochastic: bool = False,
+    ):
         self.width, self.height, self.max_steps = width, height, max_steps
+        self.stochastic = stochastic
         self.rng = random.Random(seed)
         self.engine: GameEngine
         self.steps = 0
@@ -34,7 +42,12 @@ class EWSearchEnv:
             self.rng.seed(seed)
         blue = Unit("blue-ew", Faction.BLUE, Hex(0, self.rng.randrange(self.height)), ew_power=0.8)
         red = Unit("red-target", Faction.RED, Hex(self.width - 1, self.rng.randrange(self.height)))
-        self.engine = GameEngine(HexMap(self.width, self.height), [blue, red], self.rng.randrange(2**31))
+        self.engine = GameEngine(
+            HexMap(self.width, self.height),
+            [blue, red],
+            self.rng.randrange(2**31),
+            stochastic=self.stochastic,
+        )
         self.steps = 0
         return self._obs(), {}
 
@@ -44,9 +57,21 @@ class EWSearchEnv:
         dy = (target.position.r - own.position.r) / self.height
         distance = own.position.distance(target.position)
         visible = float(distance <= own.sensor_range)
-        return np.array([own.position.q / self.width, own.position.r / self.height, dx, dy,
-                         distance / max(self.width, self.height), visible, own.hp / 100,
-                         target.hp / 100, min(target.jammed_for / 5, 1), own.cooldown], dtype=np.float32)
+        return np.array(
+            [
+                own.position.q / self.width,
+                own.position.r / self.height,
+                dx,
+                dy,
+                distance / max(self.width, self.height),
+                visible,
+                own.hp / 100,
+                target.hp / 100,
+                min(target.jammed_for / 5, 1),
+                own.cooldown,
+            ],
+            dtype=np.float32,
+        )
 
     def step(self, action: int) -> tuple[np.ndarray, float, bool, bool, dict]:
         own, target = self.engine.units["blue-ew"], self.engine.units["red-target"]
@@ -64,7 +89,9 @@ class EWSearchEnv:
         self.engine.step(1.5)
         self.steps += 1
         distance = own.position.distance(target.position)
-        progress = 0.03 * math.copysign(1, old_distance - distance) if old_distance != distance else 0
+        progress = (
+            0.03 * math.copysign(1, old_distance - distance) if old_distance != distance else 0
+        )
         reward = -0.02 + progress
         if target.jammed_for > previous_jam:
             reward += 2.0

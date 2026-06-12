@@ -1,0 +1,271 @@
+LOCAL OLLAMA LLM RECOMMENDATION AND SETUP GUIDE
+================================================
+
+Recommendation (reviewed June 12, 2026)
+---------------------------------------
+
+Use qwen3.5:9b with Ollama:
+
+    ollama pull qwen3.5:9b
+
+Why this model is recommended for this project:
+
+* The game's LLM is a strategic planner. It must follow a compact instruction,
+  reason about a JSON game-state observation, and return a valid JSON plan. Qwen
+  3.5 is intended for reasoning, instruction following, and agent-style work.
+* Ollama's official qwen3.5:9b build is a 9.65-billion-parameter Q4_K_M model
+  whose download is approximately 6.6 GB. It is a practical quality/speed
+  balance for the Windows 11 / RTX 5080 development machine described in this
+  repository's README, and leaves substantially more GPU memory available than
+  the 27B and larger variants.
+* The adapter in src/war_game/llm.py already uses Ollama's local
+  /api/generate endpoint, disables streaming, and requests JSON output. No
+  Ollama Python package or cloud account is needed.
+* The model is Apache-2.0 licensed according to its Ollama model page.
+
+Use the exact qwen3.5:9b tag rather than qwen3.5 or latest so that everyone
+running the project uses the intended model size. If qwen3.5:9b is too slow or
+must run on a low-memory/CPU-only machine, try qwen3.5:4b. The smaller model is
+faster but is more likely to produce weaker plans. Larger variants are not the
+default recommendation because strategic planning may happen repeatedly while
+the simulation runs, making latency important.
+
+Official references:
+
+* Model details: https://ollama.com/library/qwen3.5:9b
+* Ollama downloads: https://ollama.com/download
+* Windows installation: https://docs.ollama.com/windows
+* Linux installation: https://docs.ollama.com/linux
+* Local API: https://docs.ollama.com/api
+* Generate endpoint and JSON format: https://docs.ollama.com/api/generate
+
+
+1. Install Ollama
+-----------------
+
+Windows 11 (the repository's documented target environment)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+1. Install/update the current NVIDIA driver.
+2. Open PowerShell and install Ollama with either of these official methods:
+
+       irm https://ollama.com/install.ps1 | iex
+
+   Or download and run OllamaSetup.exe from:
+
+       https://ollama.com/download/windows
+
+3. Close and reopen PowerShell so that the ollama command is on PATH. Ollama
+   normally starts in the background and serves its API at
+   http://localhost:11434.
+4. Confirm the installation:
+
+       ollama --version
+
+Linux
+~~~~~
+
+Install using Ollama's official script, then verify the service:
+
+    curl -fsSL https://ollama.com/install.sh | sh
+    ollama --version
+    systemctl status ollama
+
+If the service is not running, start it with:
+
+    sudo systemctl start ollama
+
+macOS
+~~~~~
+
+Download Ollama from https://ollama.com/download/mac, move it to Applications,
+launch it once, and then confirm in Terminal:
+
+    ollama --version
+
+
+2. Download and verify the recommended model
+--------------------------------------------
+
+Run these commands in PowerShell, Terminal, or a shell:
+
+    ollama pull qwen3.5:9b
+    ollama list
+    ollama run qwen3.5:9b
+
+At the interactive prompt, enter this basic JSON-following check:
+
+    Return only JSON with one key named status and the value ready.
+
+A response similar to {"status":"ready"} confirms that the model can run.
+Enter /bye to exit the interactive session.
+
+Confirm the local API is available:
+
+Windows PowerShell:
+
+    Invoke-RestMethod http://localhost:11434/api/tags
+
+Linux/macOS:
+
+    curl http://localhost:11434/api/tags
+
+The response should include qwen3.5:9b. Keep Ollama running while using the
+project. On a manual or headless Ollama installation, start the server with:
+
+    ollama serve
+
+Do not expose port 11434 to untrusted networks. This project expects a local
+Ollama server and sends game-state observations to that server.
+
+
+3. Install this project
+-----------------------
+
+From the repository root, use Python 3.11 or newer.
+
+Windows PowerShell:
+
+    py -3.11 -m venv .venv
+    .venv\Scripts\Activate.ps1
+    pip install -e ".[visual,dev]"
+    pytest
+
+Linux/macOS:
+
+    python3.11 -m venv .venv
+    source .venv/bin/activate
+    pip install -e ".[visual,dev]"
+    pytest
+
+The visual game and the headless simulation can be checked independently of
+Ollama:
+
+    war-game
+    war-game --headless --steps 20
+
+
+4. Use qwen3.5:9b with this project's strategic planner
+-------------------------------------------------------
+
+The current CLI runs the normal game controllers; it does not automatically
+call Ollama. To use the strategic planner, instantiate OllamaPlanner with the
+recommended model, obtain a faction-visible observation, translate the plan to
+validated game actions, and submit those actions to the engine.
+
+Create a file named planner_demo.py in the repository root with this content:
+
+    import json
+
+    from war_game.engine import GameEngine
+    from war_game.llm import OllamaPlanner, actions_from_plan, observation
+    from war_game.model import Faction
+    from war_game.scenario import demo_scenario
+
+
+    game_map, units = demo_scenario()
+    engine = GameEngine(game_map, units)
+
+    planner = OllamaPlanner(
+        model="qwen3.5:9b",
+        host="http://localhost:11434",
+    )
+    state = observation(engine, Faction.BLUE)
+    plan = planner.plan(state, timeout=120)
+    print("Plan returned by Ollama:")
+    print(json.dumps(plan, indent=2))
+
+    actions = actions_from_plan(plan, engine, Faction.BLUE)
+    print("Validated actions:", actions)
+    for action in actions:
+        engine.submit(action)
+    engine.step()
+    print("Events after one engine step:", list(engine.events))
+
+Run it while Ollama is running:
+
+    python planner_demo.py
+
+The first request can take longer because Ollama must load the model into GPU
+memory. A 120-second timeout is used in the example for that cold start. Later
+requests should usually be faster while the model remains loaded.
+
+Important safety boundary: the model sees only the observation produced for the
+selected faction. Its output is untrusted. Always pass the output through
+`actions_from_plan` before submitting actions; that function rejects invalid
+actions, enemy actors, malformed coordinates, and out-of-map targets.
+
+If adding Ollama to a longer game loop, call the planner only at strategic
+decision points rather than every render frame. For example, collect the latest
+observation after a turn or objective change, request a plan, validate it, and
+then allow tactical controllers/the engine to execute it. Keep model calls out
+of performance-sensitive RL training loops unless LLM latency is intentional.
+
+
+5. Optional: make qwen3.5:9b the code default
+--------------------------------------------
+
+No source edit is required when the model is supplied explicitly as shown
+above. If the team wants every bare `OllamaPlanner()` call to use the
+recommendation, change the default model argument in src/war_game/llm.py from
+qwen2.5:7b to qwen3.5:9b and update/add tests before committing that code change.
+Using an explicit model name is preferable when experiments need reproducible
+model selection.
+
+
+6. Verify GPU use and diagnose common problems
+----------------------------------------------
+
+While planner_demo.py is running or immediately after a model request, inspect
+Ollama's loaded models:
+
+    ollama ps
+
+On the documented NVIDIA system, `ollama ps` should show the model loaded and
+indicate GPU use. `nvidia-smi` can also be used to inspect VRAM consumption:
+
+    nvidia-smi
+
+Connection refused / URL error
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Make sure the Ollama application/service is running.
+* Test http://localhost:11434/api/tags as shown above.
+* If needed, run `ollama serve` in a separate terminal.
+* Keep the default host unless Ollama is deliberately running elsewhere.
+
+Model not found
+~~~~~~~~~~~~~~~
+
+Pull the exact tag and check the installed model list:
+
+    ollama pull qwen3.5:9b
+    ollama list
+
+Planner request times out
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Retry once after the model has loaded.
+* Increase `timeout=120` further for a CPU-only or memory-constrained machine.
+* Close GPU-heavy applications.
+* Try the fallback model with `ollama pull qwen3.5:4b`, then instantiate
+  `OllamaPlanner(model="qwen3.5:4b")`.
+
+Invalid or unusable plan
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Print the raw plan as in planner_demo.py and confirm it contains a `tasks`
+  list in the shape requested by src/war_game/llm.py.
+* Keep using `actions_from_plan`; never bypass validation to accept malformed
+  model output.
+* Retry at the next decision point if all actions are rejected.
+* For production experimentation, record observations, raw plans, accepted
+  actions, events, and rewards so model quality can be evaluated on fixed
+  scenario seeds.
+
+Remove the model
+~~~~~~~~~~~~~~~~
+
+If disk space is needed, remove the downloaded model with:
+
+    ollama rm qwen3.5:9b

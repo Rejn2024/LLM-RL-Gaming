@@ -17,16 +17,20 @@ def test_combat_ew_and_fog_of_war():
     hidden = Unit("hidden", Faction.RED, Hex(5, 5))
     engine = GameEngine(HexMap(6, 6), [blue, red, hidden], seed=1)
     assert {u.id for u in engine.visible_units(Faction.BLUE)} == {"blue", "red"}
-    engine.submit(Action("blue", "ew", target_id="red")); engine.step(2)
+    engine.submit(Action("blue", "ew", target_id="red"))
+    engine.step(2)
     assert red.jammed_for > 0
     blue.cooldown = 0
-    engine.submit(Action("blue", "attack", target_id="red")); engine.step()
+    engine.submit(Action("blue", "attack", target_id="red"))
+    engine.step()
     assert red.hp < 100
 
 
 def test_white_force_does_not_prevent_victory():
-    engine = GameEngine(HexMap(2, 2), [Unit("blue", Faction.BLUE, Hex(0, 0)),
-                                      Unit("white", Faction.WHITE, Hex(1, 1), attack=0)])
+    engine = GameEngine(
+        HexMap(2, 2),
+        [Unit("blue", Faction.BLUE, Hex(0, 0)), Unit("white", Faction.WHITE, Hex(1, 1), attack=0)],
+    )
     assert engine.winner() == Faction.BLUE
 
 
@@ -41,3 +45,31 @@ def test_step_returns_new_events_and_movement_stops_before_occupied_cell():
     engine.submit(Action("blue", "move", target_hex=red.position))
     engine.step(2)
     assert blue.position != red.position
+
+
+def test_deterministic_mode_uses_expected_combat_outcomes():
+    blue = Unit("blue", Faction.BLUE, Hex(0, 0), attack=25, ew_power=0.6)
+    red = Unit("red", Faction.RED, Hex(1, 0))
+    engine = GameEngine(HexMap(2, 1), [blue, red])
+
+    engine.submit(Action("blue", "attack", target_id="red"))
+    engine.step(1)
+    assert red.hp == 75
+
+    engine.submit(Action("blue", "ew", target_id="red"))
+    engine.step(1)
+    assert red.jammed_for > 0
+
+
+def test_stochastic_mode_samples_seeded_combat_outcomes():
+    blue = Unit("blue", Faction.BLUE, Hex(0, 0), attack=25, ew_power=0.6)
+    red = Unit("red", Faction.RED, Hex(1, 0))
+    engine = GameEngine(HexMap(2, 1), [blue, red], seed=0, stochastic=True)
+
+    engine.submit(Action("blue", "attack", target_id="red"))
+    engine.step(1)
+    assert red.hp != 75
+
+    engine.submit(Action("blue", "ew", target_id="red"))
+    engine.step(1)
+    assert red.jammed_for == 0

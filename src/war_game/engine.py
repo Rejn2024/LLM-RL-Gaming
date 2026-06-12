@@ -1,4 +1,4 @@
-"""Deterministic real-time simulation engine."""
+"""Real-time simulation engine with deterministic and stochastic modes."""
 
 from __future__ import annotations
 
@@ -10,11 +10,20 @@ from .model import Action, Event, Faction, Hex, TERRAIN_COST, TERRAIN_DEFENCE, U
 
 
 class GameEngine:
-    def __init__(self, game_map: HexMap, units: list[Unit], seed: int = 0):
+    """Run game actions with fixed expected outcomes or sampled probabilistic outcomes.
+
+    Deterministic mode is the default. Set ``stochastic=True`` at startup to sample
+    attack damage and EW success using the supplied seed.
+    """
+
+    def __init__(
+        self, game_map: HexMap, units: list[Unit], seed: int = 0, stochastic: bool = False
+    ):
         self.map = game_map
         self.units = {unit.id: unit for unit in units}
         self.time = 0.0
         self.rng = random.Random(seed)
+        self.stochastic = stochastic
         self.events: deque[Event] = deque(maxlen=500)
         self._queue: deque[Action] = deque()
         self._step_events: list[Event] = []
@@ -78,7 +87,8 @@ class GameEngine:
             return
         defence = TERRAIN_DEFENCE[self.map.terrain[target.position]]
         jam_penalty = 0.55 if actor.jammed_for > 0 else 1.0
-        damage = actor.attack * jam_penalty * (1 - defence) * self.rng.uniform(0.8, 1.2)
+        damage_multiplier = self.rng.uniform(0.8, 1.2) if self.stochastic else 1.0
+        damage = actor.attack * jam_penalty * (1 - defence) * damage_multiplier
         target.hp = max(0.0, target.hp - damage)
         actor.cooldown = 1.0
         self._event("attack", actor.id, target.id, f"damage={damage:.1f}")
@@ -89,7 +99,7 @@ class GameEngine:
             return
         distance_penalty = actor.position.distance(target.position) / max(actor.sensor_range, 1)
         chance = max(0.1, min(0.9, actor.ew_power - 0.25 * distance_penalty))
-        success = self.rng.random() < chance
+        success = self.rng.random() < chance if self.stochastic else chance >= 0.5
         if success:
             target.jammed_for = max(target.jammed_for, 2.0 + actor.ew_power * 3.0)
         actor.cooldown = 1.5
@@ -97,10 +107,18 @@ class GameEngine:
 
     def visible_units(self, faction: Faction) -> list[Unit]:
         observers = [u for u in self.units.values() if u.alive and u.faction == faction]
-        return [u for u in self.units.values() if u.alive and (u.faction == faction or any(
-            o.position.distance(u.position) <= o.sensor_range for o in observers
-        ))]
+        return [
+            u
+            for u in self.units.values()
+            if u.alive
+            and (
+                u.faction == faction
+                or any(o.position.distance(u.position) <= o.sensor_range for o in observers)
+            )
+        ]
 
     def winner(self) -> Faction | None:
-        combatants = {u.faction for u in self.units.values() if u.alive and u.faction != Faction.WHITE}
+        combatants = {
+            u.faction for u in self.units.values() if u.alive and u.faction != Faction.WHITE
+        }
         return next(iter(combatants)) if len(combatants) == 1 else None
